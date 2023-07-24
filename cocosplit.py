@@ -4,8 +4,8 @@ import funcy
 from sklearn.model_selection import train_test_split
 from skmultilearn.model_selection import iterative_train_test_split
 import numpy as np
-
-
+from tqdm import tqdm
+from tqdm import tqdm
 def save_coco(file, info, licenses, images, annotations, categories):
     with open(file, 'wt', encoding='UTF-8') as coco:
         json.dump({ 'info': info, 'licenses': licenses, 'images': images, 
@@ -13,14 +13,16 @@ def save_coco(file, info, licenses, images, annotations, categories):
 
 def filter_annotations(annotations, images):
     image_ids = funcy.lmap(lambda i: int(i['id']), images)
-    return funcy.lfilter(lambda a: int(a['image_id']) in image_ids, annotations)
+    filtered_annotations = funcy.lfilter(lambda a: int(a['image_id']) in image_ids, tqdm(annotations, desc='Filtering Annotations'))
+    return filtered_annotations
 
 
 def filter_images(images, annotations):
 
     annotation_ids = funcy.lmap(lambda i: int(i['image_id']), annotations)
 
-    return funcy.lfilter(lambda a: int(a['id']) in annotation_ids, images)
+    filtered_images = funcy.lfilter(lambda a: int(a['id']) in annotation_ids, tqdm(images, desc='Filtering Images'))
+    return filtered_images
 
 
 parser = argparse.ArgumentParser(description='Splits COCO annotations file into training and test sets.')
@@ -63,20 +65,28 @@ def main(args):
             #bottle neck 1
             #remove classes that has only one sample, because it can't be split into the training and testing sets
             annotation_categories =  funcy.lremove(lambda i: annotation_categories.count(i) <=1  , annotation_categories)
-
-            annotations =  funcy.lremove(lambda i: i['category_id'] not in annotation_categories  , annotations)
-
-
-            X_train, y_train, X_test, y_test = iterative_train_test_split(np.array([annotations]).T,np.array([ annotation_categories]).T, test_size = 1-args.split)
-
-            save_coco(args.train, info, licenses, filter_images(images, X_train.reshape(-1)), X_train.reshape(-1).tolist(), categories)
-            save_coco(args.test, info, licenses,  filter_images(images, X_test.reshape(-1)), X_test.reshape(-1).tolist(), categories)
-
-            print("Saved {} entries in {} and {} in {}".format(len(X_train), args.train, len(X_test), args.test))
+    
+            filtered_annotations =  funcy.lremove(lambda i: i['category_id'] not in annotation_categories  , annotations)
+    
+            X_train, y_train, X_test, y_test = iterative_train_test_split(np.array([annotations]).T,np.array([ annotation_categories]).T, test_size = 1-args.split, random_state=42)
+    
+            img_train = filter_images(images, X_train.reshape(-1))
+            img_test = filter_images(images, X_test.reshape(-1))
+            
+            image_test_ids = funcy.lmap(lambda i: int(i['id']), img_test)
+            img_train = funcy.lremove(lambda a: int(a['id']) in image_test_ids, img_train)
+            
+            anns_train = filter_annotations(annotations, img_train)
+            anns_test = filter_annotations(annotations, img_test)
+            
+            save_coco(args.train, info, licenses, img_train, anns_train, categories)
+            save_coco(args.test, info, licenses,  img_test, anns_test, categories)
+    
+            print("Saved {} entries in {} and {} in {}".format(len(anns_train), args.train, len(anns_test), args.test))
             
         else:
 
-            X_train, X_test = train_test_split(images, train_size=args.split)
+             X_train, X_test = train_test_split(images, train_size=args.split, random_state=42)
 
             anns_train = filter_annotations(annotations, X_train)
             anns_test=filter_annotations(annotations, X_test)
